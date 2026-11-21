@@ -20,82 +20,162 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex libssl-dev libelf-dev gcc-aarch64-linux-gnu zip curl dwarves rsync python3 git make libarchive-tools openjdk-11-jdk
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev gcc-aarch64-linux-gnu zip curl dwarves rsync python3 python-is-python3 git make libarchive-tools openjdk-11-jdk
 
-      - name: Download Official Samsung Source
+      - name: Clone Samsung Official Kernel Tree (WildKernels SM-F741B)
         run: |
-          SRC_URL="https://github.com/${{ github.repository }}/releases/download/v1.0/SM-F741B_15_Opensource.zip"
-          curl -L -o SM-F741B_15_Opensource.zip "$SRC_URL"
-          unzip -q SM-F741B_15_Opensource.zip
-          tar -zxf Kernel.tar.gz
-          rm -f SM-F741B_15_Opensource.zip Kernel.tar.gz
+          git clone --depth 1 -b SM-F741B-Oneui8 --single-branch https://github.com/WildKernels/Samsung_Kernels.git kernel
 
-      - name: Setup Prebuilts & Toolchains for Bazel
+      - name: Extract all prebuilt archives
         run: |
-          mkdir -p kernel_platform/prebuilts/clang/host/linux-x86/clang-r487747c
-          CLANG_URL="https://kali.download/nethunter-images/toolchains/clang-r487747c.tar.gz"
-          curl -L "$CLANG_URL" | tar -zx -C kernel_platform/prebuilts/clang/host/linux-x86/clang-r487747c/
+          cd kernel
+          find . -type f -name '*.tar.xz' -print0 | while IFS= read -r -d '' file; do
+            echo "Extracting $file"
+            tar -xf "$file"
+            rm "$file"
+          done
 
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/bazel/linux-x86_64 kernel_platform/prebuilts/bazel/linux-x86_64
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/jdk/jdk11 kernel_platform/prebuilts/jdk/jdk11
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/build-tools kernel_platform/prebuilts/build-tools
-
-          chmod +x kernel_platform/prebuilts/bazel/linux-x86_64/bazel
-          chmod +x kernel_platform/tools/bazel
+      - name: Fix One UI 7 Android 15 Wi-Fi Version (6.1.99)
+        run: |
+          cd kernel
+          # Revert SUBLEVEL tu 128 ve 99 de khop vermagic module Wi-Fi qca_cld3_kiwi_v2.ko tren One UI 7
+          sed -i 's/SUBLEVEL = 128/SUBLEVEL = 99/' kernel_platform/common/Makefile
+          sed -i 's/BUILD_NUMBER=F741BXXU2CYI6/BUILD_NUMBER=F741BXXU2BYCJ/' build_kernel_GKI.sh
+          # Xoa co -dirty de vermagic khop 100%
+          sed -i 's/-dirty//' kernel_platform/common/scripts/setlocalversion
 
       - name: Integrate KernelSU-Next
         run: |
-          cd kernel_platform/common
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+          cd kernel/kernel_platform/common
+          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
 
       - name: Integrate SUSFS
         run: |
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-6.1 susfs
+          cd kernel
+          git clone --depth 1 -b gki-android14-6.1 --single-branch https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
           cd kernel_platform/common
-          cp ../../susfs/kernel_patches/fs/* fs/
-          cp ../../susfs/kernel_patches/include/linux/* include/linux/
-          patch -p1 < ../../susfs/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch || true
-          patch -p1 -d drivers/kernelsu < ../../susfs/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
+          cp ../../susfs4ksu/kernel_patches/fs/* fs/
+          cp ../../susfs4ksu/kernel_patches/include/linux/* include/linux/
+          cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch ./
 
-      - name: Enable Configs & Remove -dirty Flag
+          # Chuan bi file truoc khi va SUSFS (tranh xung dot ma nguon Samsung)
+          sed -i '/#ifdef CONFIG_SECURITY_DEFEX/,/^#endif/d' fs/open.c
+          sed -i '/#include "internal.h"/a #include <trace/hooks/blk.h>' fs/namespace.c
+          sed -i '/copy_flags = CL_COPY_UNBINDABLE | CL_EXPIRE;/,/#endif/ {
+           /#ifdef CONFIG_KDP_NS/,/#endif/ {
+              /#else/,/#endif/!d
+              /#else/d
+              /#endif/d
+           }
+          }' fs/namespace.c
+
+          patch -p1 < 50_add_susfs_in_gki-android14-6.1.patch || true
+          sed -i '/#include <trace\/hooks\/blk.h>/d' fs/namespace.c
+          rm -f 50_add_susfs_in_gki-android14-6.1.patch
+
+      - name: Configure Defconfig & Disable Knox Securities
         run: |
-          cd kernel_platform/common
-          echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> arch/arm64/configs/gki_defconfig
+          cd kernel
+          COMMON="kernel_platform/common"
+          GKI_DEFCONFIG="$COMMON/arch/arm64/configs/gki_defconfig"
 
-          # Xóa bỏ cờ -dirty để module Qualcomm nạp khớp 100%
-          sed -i 's/-dirty//' scripts/setlocalversion
+          # Bat KernelSU & SuSFS
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SUS_PATH
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SUS_MOUNT
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SUS_KSTAT
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_TRY_UMOUNT
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SPOOF_UNAME
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_ENABLE_LOG
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
 
-      - name: Execute Samsung Official Build Script
+          # Tat co che chan root cua Samsung Knox / RKP / Defex
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KSU_SAMSUNG_KDP
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KSU_SAMSUNG_RKP
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KSU_SAMSUNG_DEFEX
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KSU_SAMSUNG_NO_PATCH_TEXT
+
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_UH
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_UH_RKP
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_UH_LKMAUTH
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_UH_LKM_BLOCK
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_RKP
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_RKP_CFP_JOPP
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_RKP_CFP_ROPP
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_RKP_CFP
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_SECURITY_DEFEX
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_SECURITY_DEFEX_USER
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_SECURITY_DEFEX_DTM
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_SECURITY_DEFEX_IMR
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_PROCA
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_PROCA_S_OS
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_PROCA_CERTIFICATES_DB
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_FIVE
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KDP
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KDP_NS
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KNOX_NCM
+
+          # Bo check_defconfig de khong bi dung build
+          sed -i 's/check_defconfig//' "$COMMON/build.config.gki"
+
+      - name: Build Official Samsung Kernel via Bazel
         run: |
+          cd kernel
           chmod +x build_kernel_GKI.sh
-          ./build_kernel_GKI.sh
+          chmod +x kernel_platform/tools/bazel 2>/dev/null || true
+          chmod +x kernel_platform/build/kernel/kleaf/bazel.sh 2>/dev/null || true
+          ./build_kernel_GKI.sh || true
 
-      - name: Package AnyKernel3
+      - name: Package AnyKernel3 & Odin boot.tar
         run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-          sed -i 's/BLOCK=\/dev\/block\/platform\/omap\/omap_hsmmc.0\/by-name\/boot;/block=boot;/g' AnyKernel3/anykernel.sh
-          sed -i 's/IS_SLOT_DEVICE=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
-          sed -i 's/dump_boot;/split_boot;/g' AnyKernel3/anykernel.sh
-          sed -i 's/write_boot;/flash_boot;/g' AnyKernel3/anykernel.sh
+          cd kernel
+          KERNEL_IMAGE=$(find . -name "Image" -type f | grep -E "dist|mixed_tree|bazel-bin" | head -n 1)
+          if [ -z "$KERNEL_IMAGE" ]; then
+            KERNEL_IMAGE=$(find . -name "Image" -type f | head -n 1)
+          fi
+          echo "Selected Image: $KERNEL_IMAGE"
+          ls -lh "$KERNEL_IMAGE"
 
-          find out/ -name "Image" -exec cp {} AnyKernel3/ \;
+          # 1. Dong goi AnyKernel3 ZIP
+          git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 AnyKernel3
+          cp "$KERNEL_IMAGE" AnyKernel3/Image
           cd AnyKernel3
-          zip -r9 ../SM-F741B-OneUI7-KSU-Next-SUSFS-Official.zip * -x .git README.md
+          zip -r9 ../../SM-F741B-OneUI7-6.1.99-KSU-Next-SUSFS-AnyKernel3.zip * -x .git README.md
+          cd ..
 
-      - name: Upload Artifact
+          # 2. Dong goi boot.img (Header v4) va boot.tar cho Odin
+          python3 -c "
+          import os, struct
+          kernel_path = '$KERNEL_IMAGE'
+          kernel_size = os.path.getsize(kernel_path)
+          header = bytearray(4096)
+          header[0:8] = b'ANDROID!'
+          struct.pack_into('<I', header, 8, kernel_size)
+          struct.pack_into('<I', header, 12, 0)
+          header[16:20] = bytes.fromhex('9601001c')
+          struct.pack_into('<I', header, 20, 1584)
+          struct.pack_into('<I', header, 40, 4)
+          with open('../boot.img', 'wb') as f_out:
+              f_out.write(header)
+              with open(kernel_path, 'rb') as f_k:
+                  f_out.write(f_k.read())
+              pad = (4096 - (kernel_size % 4096)) % 4096
+              f_out.write(b'\x00' * pad)
+              current_pos = f_out.tell()
+              if current_pos < 100663296:
+                  f_out.write(b'\x00' * (100663296 - current_pos))
+          "
+          cd ..
+          tar -cf boot.tar boot.img
+
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: SM-F741B-OneUI7-KSU-Next-SUSFS-Official
-          path: SM-F741B-OneUI7-KSU-Next-SUSFS-Official.zip
+          name: SM-F741B-OneUI7-6.1.99-KSU-SUSFS-Build
+          path: |
+            SM-F741B-OneUI7-6.1.99-KSU-Next-SUSFS-AnyKernel3.zip
+            boot.tar
