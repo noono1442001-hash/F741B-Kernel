@@ -1,78 +1,104 @@
-name: Build Samsung SM-F741B KernelSU-Next + SUSFS
+name: Build Samsung SM-F741B KernelSU-Next + SUSFS 6.1.99
 
-on:
-  workflow_dispatch:
+    on:
+      workflow_dispatch:
 
-jobs:
-  build:
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc bison flex libssl-dev libelf-dev gcc-aarch64-linux-gnu zip curl dwarves
+    jobs:
+      build:
+        runs-on: ubuntu-22.04
+        steps:
+          - name: Install dependencies
+            run: |
+              sudo apt-get update
+              sudo apt-get install -y bc bison flex libssl-dev libelf-dev
+              gcc-aarch64-linux-gnu zip curl dwarves
 
-      - name: Download AOSP Clang 17
-        run: |
-          mkdir -p clang-17
-          curl -L "https://kali.download/nethunter-images/toolchains/clang-r487747c.tar.gz" | tar -zx -C clang-17/
+          - name: Download AOSP Clang 17
+            run: |
+              mkdir -p clang-17
+              curl -L
+              "https://kali.download/nethunter-images/toolchains/clang-r48774
+              7c.tar.gz" | tar -zx -C clang-17/
 
-      - name: Clone Android Common Kernel 6.1
-        run: |
-          git clone --depth=1 https://android.googlesource.com/kernel/common -b android14-6.1 common
+          - name: Clone Android Common Kernel 6.1.99 (Đúng chuẩn bản ROM)
+            run: |
+              git clone --depth=1
+              https://android.googlesource.com/kernel/common -b
+              android14-6.1.99_r00 common
 
-      - name: Setup KernelSU-Next
-        run: |
-          cd common
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+          - name: Setup KernelSU-Next
+            run: |
+              cd common
+              curl -LSs
+              "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/
+              next/kernel/setup.sh" | bash -s next
 
-      - name: Setup SUSFS
-        run: |
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-6.1 susfs
-          cd common
-          cp ../susfs/kernel_patches/fs/* fs/
-          cp ../susfs/kernel_patches/include/linux/* include/linux/
-          patch -p1 < ../susfs/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch || true
+          - name: Setup & Patch Full SUSFS (Kernel + KernelSU)
+            run: |
+              git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git
+              -b gki-android14-6.1 susfs
+              cd common
+              # 1. Patch cho Kernel
+              cp ../susfs/kernel_patches/fs/* fs/
+              cp ../susfs/kernel_patches/include/linux/* include/linux/
+              patch -p1 <
+              ../susfs/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch
+              || true
+              
+              # 2. Patch cho KernelSU để kích hoạt CONFIG_KSU_SUSFS
+              cd KernelSU
+              patch -p1 <
+              ../../susfs/kernel_patches/KernelSU/10_enable_susfs_for_ksu.pat
+              ch || true
 
-      - name: Configure Kernel
-        run: |
-          cd common
-          export PATH=$GITHUB_WORKSPACE/clang-17/bin:$PATH
-          make ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
-          scripts/config --file .config \
-            -e KSU \
-            -e KSU_SUSFS \
-            -e KSU_SUSFS_SUS_PATH \
-            -e KSU_SUSFS_SUS_MOUNT \
-            -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-            -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
-            -e KSU_SUSFS_SUS_KSTAT \
-            -e KSU_SUSFS_TRY_UMOUNT \
-            -e KSU_SUSFS_SPOOF_UNAME \
-            -e KSU_SUSFS_ENABLE_LOG \
-            -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            -d DEBUG_INFO_BTF \
-            --set-str LOCALVERSION "-android14-Wild"
+          - name: Configure Kernel
+            run: |
+              cd common
+              export PATH=$GITHUB_WORKSPACE/clang-17/bin:$PATH
+              make ARCH=arm64 LLVM=1 LLVM_IAS=1
+              CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
+              scripts/config --file .config \
+                -e KSU \
+                -e KSU_SUSFS \
+                -e KSU_SUSFS_SUS_PATH \
+                -e KSU_SUSFS_SUS_MOUNT \
+                -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+                -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+                -e KSU_SUSFS_SUS_KSTAT \
+                -e KSU_SUSFS_TRY_UMOUNT \
+                -e KSU_SUSFS_SPOOF_UNAME \
+                -e KSU_SUSFS_ENABLE_LOG \
+                -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+                -d DEBUG_INFO_BTF \
+                --set-str LOCALVERSION "-android14-Wild"
 
-      - name: Build Kernel
-        run: |
-          cd common
-          export PATH=$GITHUB_WORKSPACE/clang-17/bin:$PATH
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- Image
+          - name: Build Kernel
+            run: |
+              cd common
+              export PATH=$GITHUB_WORKSPACE/clang-17/bin:$PATH
+              make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1
+              CROSS_COMPILE=aarch64-linux-gnu- Image
 
-      - name: Package AnyKernel3
-        run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-          sed -i 's/block=auto/block=boot/g' AnyKernel3/anykernel.sh
-          sed -i 's/is_slot_device=0/is_slot_device=auto/g' AnyKernel3/anykernel.sh
-          cp common/arch/arm64/boot/Image AnyKernel3/
-          cd AnyKernel3
-          zip -r9 ../SM-F741B-KSU-Next-SUSFS-AnyKernel3.zip * -x .git README.md
+          - name: Package AnyKernel3
+            run: |
+              git clone https://github.com/osm0sis/AnyKernel3.git
+              sed -i 's/do.devicecheck=1/do.devicecheck=0/g'
+              AnyKernel3/anykernel.sh
+              sed -i
+              's/BLOCK=\/dev\/block\/platform\/omap\/omap_hsmmc.0\/by-name\/b
+              oot;/block=boot;/g' AnyKernel3/anykernel.sh
+              sed -i 's/IS_SLOT_DEVICE=0;/is_slot_device=auto;/g'
+              AnyKernel3/anykernel.sh
+              sed -i 's/dump_boot;/split_boot;/g' AnyKernel3/anykernel.sh
+              sed -i 's/write_boot;/flash_boot;/g' AnyKernel3/anykernel.sh
+              cp common/arch/arm64/boot/Image AnyKernel3/
+              cd AnyKernel3
+              zip -r9 ../SM-F741B-KSU-Next-SUSFS-6.1.99.zip * -x .git
+              README.md
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: SM-F741B-KSU-Next-SUSFS-AnyKernel3
-          path: SM-F741B-KSU-Next-SUSFS-AnyKernel3.zip
+          - name: Upload Artifact
+            uses: actions/upload-artifact@v4
+            with:
+              name: SM-F741B-KSU-Next-SUSFS-6.1.99
+              path: SM-F741B-KSU-Next-SUSFS-6.1.99.zip
