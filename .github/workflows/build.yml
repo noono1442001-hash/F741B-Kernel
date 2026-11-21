@@ -10,13 +10,12 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng bc libssl-dev rsync libelf-dev
+          sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng bc libssl-dev rsync libelf-dev gcc-aarch64-linux-gnu
 
       - name: Download AOSP Clang 17
         run: |
           mkdir -p clang-17
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz
-          tar -C clang-17/ -zxf clang-r487747c.tar.gz
+          curl -L "https://kali.download/nethunter-images/toolchains/clang-r487747c.tar.gz" | tar -zx -C clang-17/
 
       - name: Clone Android Common Kernel 6.1
         run: |
@@ -39,14 +38,14 @@ jobs:
         run: |
           cd common
           export PATH=$GITHUB_WORKSPACE/clang-17/bin:$PATH
-          make ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig
+          make ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
           scripts/config --file .config -e KSU -e KSU_SUSFS -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT -e KSU_SUSFS_SUS_KSTAT -e KSU_SUSFS_TRY_UMOUNT -e KSU_SUSFS_SPOOF_UNAME -e KSU_SUSFS_ENABLE_LOG -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG --set-str LOCALVERSION "-android14-Wild"
 
       - name: Build Kernel
         run: |
           cd common
           export PATH=$GITHUB_WORKSPACE/clang-17/bin:$PATH
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- Image
 
       - name: Package AnyKernel3
         run: |
