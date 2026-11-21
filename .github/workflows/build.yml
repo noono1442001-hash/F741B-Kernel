@@ -1,4 +1,4 @@
-name: Build Samsung SM-F741B KernelSU-Next + SUSFS
+ name: Build Samsung SM-F741B KernelSU-Next + SUSFS
 
     on:
       workflow_dispatch:
