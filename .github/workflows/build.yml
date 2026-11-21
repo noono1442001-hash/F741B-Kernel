@@ -15,7 +15,7 @@ jobs:
       - name: Cài đặt thư viện build cần thiết
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf imagemagick libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3 cpio aria2 lz4
+          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf imagemagick libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3 cpio aria2 lz4 zstd
 
       - name: Tải và giải nén Kernel Source SM-F741B
         run: |
@@ -23,29 +23,30 @@ jobs:
           aria2c -x 16 -s 16 "https://github.com/noono1442001-hash/F741B-Kernel/releases/download/v1.0/SM-F741B_15_Opensource.zip" -o source.zip
           unzip -q source.zip
           rm -f source.zip
-          ls -la
-          # Giải nén các gói tar.gz bên trong (Kernel.tar.gz / kernel_platform)
           for f in *.tar.gz; do [ -f "$f" ] && tar -xzf "$f" && rm -f "$f"; done
           ls -la
 
-      - name: Tải AOSP Clang Toolchain (r510928)
+      - name: Tải Clang Toolchain (ZyC Clang 19 - Tương thích GKI 6.1)
         run: |
           mkdir -p toolchain/clang
-          curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r510928.tar.gz" -o clang.tar.gz
+          CLANG_URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases/latest | grep "browser_download_url.*tar.gz" | cut -d '"' -f 4 | head -n 1)
+          echo "Downloading Clang from: $CLANG_URL"
+          aria2c -x 16 -s 16 "$CLANG_URL" -o clang.tar.gz
           tar -xzf clang.tar.gz -C toolchain/clang
           rm -f clang.tar.gz
+          toolchain/clang/bin/clang --version
 
       - name: Tích hợp KernelSU-Next (Nhánh SUSFS) & WildKernels SUSFS Patches
         run: |
-          # Xác định thư mục chứa mã nguồn kernel (common hoặc kernel_platform/common)
           if [ -d "src/kernel_platform/common" ]; then
             KDIR="$GITHUB_WORKSPACE/src/kernel_platform/common"
           elif [ -d "src/common" ]; then
             KDIR="$GITHUB_WORKSPACE/src/common"
           else
-            KDIR=$(find "$GITHUB_WORKSPACE/src" -maxdepth 3 -name "Makefile" -exec dirname {} \; | head -n 1)
+            KDIR=$(find "$GITHUB_WORKSPACE/src" -maxdepth 4 -name "Makefile" -exec dirname {} \; | head -n 1)
           fi
           echo "KDIR=$KDIR" >> $GITHUB_ENV
+          echo "Detected KDIR: $KDIR"
           cd "$KDIR"
 
           # 1. Cài đặt KernelSU-Next (nhánh hỗ trợ SUSFS)
@@ -58,7 +59,6 @@ jobs:
           cp /tmp/wild_patches/50_add_susfs_in_gki-android14-6.1.patch . 2>/dev/null || \
           cp $(find /tmp/wild_patches -name "*susfs*android14-6.1*.patch" | head -n 1) ./susfs.patch
 
-          # Áp patch SUSFS (bỏ qua nếu có hunk nhỏ lệch dòng do Samsung custom, log lại để kiểm tra)
           for p in *susfs*.patch; do
             [ -f "$p" ] && echo "Applying $p..." && patch -p1 --forward --fuzz=3 < "$p" || true
           done
@@ -103,7 +103,6 @@ jobs:
           export LLVM=1
           export LLVM_IAS=1
 
-          # Tìm fragment config của b6q (Z Flip 6) nếu có
           B6Q_FRAG=$(find arch/arm64/configs -name "*b6q*.config" | sed 's|arch/arm64/configs/||' | tr '\n' ' ')
           echo "Found b6q fragments: $B6Q_FRAG"
 
