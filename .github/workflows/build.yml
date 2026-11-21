@@ -1,129 +1,101 @@
-name: Build SM-F741B KernelSU-Next + Wild SUSFS
+name: Build Samsung SM-F741B KernelSU-Next + SUSFS
 
-on:
-  workflow_dispatch:
+    on:
+      workflow_dispatch:
 
-jobs:
-  build:
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Giải phóng dung lượng ổ đĩa Runner
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          df -h
+    jobs:
+      build:
+        runs-on: ubuntu-22.04
+        steps:
+          - name: Cài đặt công cụ biên dịch
+            run: |
+              sudo apt-get update
+              sudo apt-get install -y git ccache automake flex lzop bison
+              gperf build-essential \
+                zip curl zlib1g-dev g++-multilib libxml2-utils bzip2
+                libbz2-dev libbz2-1.0 \
+                libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev
+                liblz4-tool \
+                make optipng bc libssl-dev rsync libelf-dev
 
-      - name: Cài đặt đầy đủ thư viện build
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf imagemagick libncurses5-dev libsdl1.2-dev libssl-dev libelf-dev dwarves pkg-config libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3 cpio aria2 lz4 zstd
+          - name: Tải AOSP Clang 17.0.2 (r487747c) chuẩn Android 14/15
+            run: |
+              mkdir -p clang-17
+              wget -q
+              https://android.googlesource.com/platform/prebuilts/clang/host/
+              linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz
+              tar -C clang-17/ -zxf clang-r487747c.tar.gz
 
-      - name: Tải và giải nén Kernel Source SM-F741B
-        run: |
-          mkdir -p src && cd src
-          aria2c -x 16 -s 16 "https://github.com/noono1442001-hash/F741B-Kernel/releases/download/v1.0/SM-F741B_15_Opensource.zip" -o source.zip
-          unzip -q source.zip
-          rm -f source.zip
-          for f in *.tar.gz; do [ -f "$f" ] && tar -xzf "$f" && rm -f "$f"; done
+          - name: Kéo mã nguồn Android Common Kernel (ACK 6.1)
+            run: |
+              git clone --depth=1
+              https://android.googlesource.com/kernel/common -b android14-6.1
+              common
+              cd common
 
-      - name: Tải Clang Toolchain (ZyC Clang)
-        run: |
-          mkdir -p toolchain/clang
-          CLANG_URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases/latest | grep "browser_download_url.*tar.gz" | cut -d '"' -f 4 | head -n 1)
-          aria2c -x 16 -s 16 "$CLANG_URL" -o clang.tar.gz
-          tar -xzf clang.tar.gz -C toolchain/clang
-          rm -f clang.tar.gz
+          - name: Tích hợp KernelSU-Next
+            run: |
+              cd common
+              curl -LSs
+              "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/
+              next/kernel/setup.sh" | bash -s next
 
-      - name: Tích hợp đồng bộ WildKernels KernelSU-Next + SUSFS
-        run: |
-          KDIR="$GITHUB_WORKSPACE/src/kernel_platform/common"
-          [ ! -d "$KDIR" ] && KDIR=$(find "$GITHUB_WORKSPACE/src" -maxdepth 4 -name "gki_defconfig" | sed 's|/arch/arm64/configs/gki_defconfig||' | head -n 1)
-          echo "KDIR=$KDIR" >> $GITHUB_ENV
-          cd "$KDIR"
+          - name: Tích hợp SUSFS (SuperUser FileSystem)
+            run: |
+              # Kéo mã nguồn susfs4ksu cho kernel 6.1
+              git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git
+              -b gki-android14-6.1 susfs
+              cd common
+              # Copy các file mã nguồn SUSFS
+              cp ../susfs/kernel_patches/fs/* fs/
+              cp ../susfs/kernel_patches/include/linux/* include/linux/
+              # Áp các bản vá kernel
+              patch -p1 <
+              ../susfs/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch
+              || true
 
-          # 1. Kéo đồng bộ KernelSU-Next nhánh next-susfs của WildKernels (đã tích hợp sẵn mã KSU-SUSFS khớp phiên bản)
-          git clone --depth=1 -b next-susfs https://github.com/WildKernels/KernelSU-Next.git || \
-          git clone --depth=1 https://github.com/WildKernels/KernelSU-Next.git
+          - name: Cấu hình Kernel (.config)
+            run: |
+              cd common
+              export PATH=$GITHUB_WORKSPACE/clang-17/bin:$PATH
+              make ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig
+              
+              # Bật các tính năng KernelSU và SUSFS
+              scripts/config --file .config \
+                -e KSU \
+                -e KSU_SUSFS \
+                -e KSU_SUSFS_SUS_PATH \
+                -e KSU_SUSFS_SUS_MOUNT \
+                -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+                -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+                -e KSU_SUSFS_SUS_KSTAT \
+                -e KSU_SUSFS_TRY_UMOUNT \
+                -e KSU_SUSFS_SPOOF_UNAME \
+                -e KSU_SUSFS_ENABLE_LOG \
+                -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+                --set-str LOCALVERSION "-android14-Wild"
 
-          ln -sf "$(pwd)/KernelSU-Next/kernel" "$(pwd)/drivers/kernelsu"
-          grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
-          grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          - name: Tiến hành biên dịch Kernel Image
+            run: |
+              cd common
+              export PATH=$GITHUB_WORKSPACE/clang-17/bin:$PATH
+              make -j$(nproc --all) \
+                ARCH=arm64 \
+                LLVM=1 \
+                LLVM_IAS=1 \
+                Image
 
-          # 2. Kéo bộ patch tương ứng từ WildKernels/kernel_patches (chứa cả file .c/.h và .patch đồng bộ với nhánh trên)
-          git clone --depth=1 https://github.com/WildKernels/kernel_patches.git /tmp/wild_patches
+          - name: Đóng gói AnyKernel3
+            run: |
+              git clone https://github.com/osm0sis/AnyKernel3.git
+              cp common/arch/arm64/boot/Image AnyKernel3/
+              cd AnyKernel3
+              zip -r9 ../SM-F741B-KSU-Next-SUSFS-AnyKernel3.zip * -x .git
+              README.md
 
-          # Chép các file nguồn susfs (susfs.h, susfs.c...) từ kho WildKernels nếu có
-          find /tmp/wild_patches -name "susfs*.h" -exec cp -f {} include/linux/ \;
-          find /tmp/wild_patches -name "susfs*.c" -exec cp -f {} fs/ \;
-
-          # Tìm đúng file patch GKI android14-6.1 trong WildKernels
-          SUSFS_PATCH=$(find /tmp/wild_patches -name "50_add_susfs_in_gki-android14-6.1.patch" | head -n 1)
-          [ -z "$SUSFS_PATCH" ] && SUSFS_PATCH=$(find /tmp/wild_patches -name "*susfs*android14-6.1*.patch" | head -n 1)
-          echo "Applying WildKernels patch: $SUSFS_PATCH"
-
-          patch -p1 --forward --fuzz=3 < "$SUSFS_PATCH" || true
-
-          # Áp thêm các bản vá sửa lỗi SUSFS (fix patches) của WildKernels nếu có
-          for fixp in $(find /tmp/wild_patches -path "*susfs_fix_patches*" -name "*.patch" | sort); do
-            echo "Applying fix patch: $fixp"
-            patch -p1 --forward --fuzz=3 < "$fixp" || true
-          done
-
-      - name: Cấu hình Samsung (Tắt RKP/UH/DEFEX & Bật KSU + SUSFS)
-        run: |
-          cd "$KDIR"
-          BASE_DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          [ ! -f "$BASE_DEFCONFIG" ] && BASE_DEFCONFIG=$(find arch/arm64/configs -maxdepth 2 -name "*defconfig" | head -n 1)
-
-          ./scripts/config --file "$BASE_DEFCONFIG" \
-            -d UH \
-            -d UH_RKP \
-            -d UH_LKMAUTH \
-            -d UH_LKM_BLOCK \
-            -d RKP_CFP_JOPP \
-            -d SECURITY_DEFEX \
-            -d PROCA \
-            -d FIVE \
-            -d DEBUG_INFO_BTF \
-            -e KSU \
-            -e KSU_SUSFS \
-            -e KSU_SUSFS_SUS_PATH \
-            -e KSU_SUSFS_SUS_MOUNT \
-            -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
-            -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-            -e KSU_SUSFS_SUS_KSTAT \
-            -e KSU_SUSFS_SUS_OVERLAYFS \
-            -e KSU_SUSFS_TRY_UMOUNT \
-            -e KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
-            -e KSU_SUSFS_SPOOF_UNAME \
-            -e KSU_SUSFS_ENABLE_LOG \
-            -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            -e KSU_SUSFS_OPEN_REDIRECT
-
-      - name: Biên dịch Kernel (Image)
-        run: |
-          set -o pipefail
-          cd "$KDIR"
-          export PATH="$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH"
-          export ARCH=arm64
-          export LLVM=1
-          export LLVM_IAS=1
-
-          BASE_NAME=$(find arch/arm64/configs -maxdepth 1 -name "gki_defconfig" -exec basename {} \; | head -n 1)
-          [ -z "$BASE_NAME" ] && BASE_NAME=$(find arch/arm64/configs -maxdepth 2 -name "*defconfig" | sed 's|arch/arm64/configs/||' | head -n 1)
-
-          FRAGS=$(find arch/arm64/configs -type f \( -name "*pineapple*.config" -o -name "*b6q*.config" \) | sed 's|arch/arm64/configs/||' | sort | tr '\n' ' ')
-          echo "Building with: $BASE_NAME $FRAGS"
-
-          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ $BASE_NAME $FRAGS
-          if ! make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 HOSTCC=gcc HOSTCXX=g++ Image 2>&1 | tee build.log; then
-            echo "=== BUILD FAILED - PRINTING ERRORS ==="
-            grep -iE "error:|fatal error:|undefined reference" build.log | tail -n 30
-            exit 1
-          fi
-
-      - name: Đóng gói và Upload file Image thành phẩm
-        uses: actions/upload-artifact@v4
-        with:
-          name: SM-F741B-KSU-Next-Wild-SUSFS
-          path: ${{ env.KDIR }}/out/arch/arm64/boot/Image
+          - name: Upload Artifact
+            uses: actions/upload-artifact@v4
+            with:
+              name: SM-F741B-KSU-Next-SUSFS-AnyKernel3
+              path: SM-F741B-KSU-Next-SUSFS-AnyKernel3.zip
