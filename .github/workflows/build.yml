@@ -1,101 +1,62 @@
- name: Build Samsung SM-F741B KernelSU-Next + SUSFS
+name: Build Samsung SM-F741B KernelSU-Next + SUSFS
 
-    on:
-      workflow_dispatch:
+on:
+  workflow_dispatch:
 
-    jobs:
-      build:
-        runs-on: ubuntu-22.04
-        steps:
-          - name: Cài đặt công cụ biên dịch
-            run: |
-              sudo apt-get update
-              sudo apt-get install -y git ccache automake flex lzop bison
-              gperf build-essential \
-                zip curl zlib1g-dev g++-multilib libxml2-utils bzip2
-                libbz2-dev libbz2-1.0 \
-                libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev
-                liblz4-tool \
-                make optipng bc libssl-dev rsync libelf-dev
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng bc libssl-dev rsync libelf-dev
 
-          - name: Tải AOSP Clang 17.0.2 (r487747c) chuẩn Android 14/15
-            run: |
-              mkdir -p clang-17
-              wget -q
-              https://android.googlesource.com/platform/prebuilts/clang/host/
-              linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz
-              tar -C clang-17/ -zxf clang-r487747c.tar.gz
+      - name: Download AOSP Clang 17
+        run: |
+          mkdir -p clang-17
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz
+          tar -C clang-17/ -zxf clang-r487747c.tar.gz
 
-          - name: Kéo mã nguồn Android Common Kernel (ACK 6.1)
-            run: |
-              git clone --depth=1
-              https://android.googlesource.com/kernel/common -b android14-6.1
-              common
-              cd common
+      - name: Clone Android Common Kernel 6.1
+        run: |
+          git clone --depth=1 https://android.googlesource.com/kernel/common -b android14-6.1 common
 
-          - name: Tích hợp KernelSU-Next
-            run: |
-              cd common
-              curl -LSs
-              "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/
-              next/kernel/setup.sh" | bash -s next
+      - name: Setup KernelSU-Next
+        run: |
+          cd common
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
 
-          - name: Tích hợp SUSFS (SuperUser FileSystem)
-            run: |
-              # Kéo mã nguồn susfs4ksu cho kernel 6.1
-              git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git
-              -b gki-android14-6.1 susfs
-              cd common
-              # Copy các file mã nguồn SUSFS
-              cp ../susfs/kernel_patches/fs/* fs/
-              cp ../susfs/kernel_patches/include/linux/* include/linux/
-              # Áp các bản vá kernel
-              patch -p1 <
-              ../susfs/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch
-              || true
+      - name: Setup SUSFS
+        run: |
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-6.1 susfs
+          cd common
+          cp ../susfs/kernel_patches/fs/* fs/
+          cp ../susfs/kernel_patches/include/linux/* include/linux/
+          patch -p1 < ../susfs/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch || true
 
-          - name: Cấu hình Kernel (.config)
-            run: |
-              cd common
-              export PATH=$GITHUB_WORKSPACE/clang-17/bin:$PATH
-              make ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig
-              
-              # Bật các tính năng KernelSU và SUSFS
-              scripts/config --file .config \
-                -e KSU \
-                -e KSU_SUSFS \
-                -e KSU_SUSFS_SUS_PATH \
-                -e KSU_SUSFS_SUS_MOUNT \
-                -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
-                -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
-                -e KSU_SUSFS_SUS_KSTAT \
-                -e KSU_SUSFS_TRY_UMOUNT \
-                -e KSU_SUSFS_SPOOF_UNAME \
-                -e KSU_SUSFS_ENABLE_LOG \
-                -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-                -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-                --set-str LOCALVERSION "-android14-Wild"
+      - name: Configure Kernel
+        run: |
+          cd common
+          export PATH=$GITHUB_WORKSPACE/clang-17/bin:$PATH
+          make ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig
+          scripts/config --file .config -e KSU -e KSU_SUSFS -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT -e KSU_SUSFS_SUS_KSTAT -e KSU_SUSFS_TRY_UMOUNT -e KSU_SUSFS_SPOOF_UNAME -e KSU_SUSFS_ENABLE_LOG -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG --set-str LOCALVERSION "-android14-Wild"
 
-          - name: Tiến hành biên dịch Kernel Image
-            run: |
-              cd common
-              export PATH=$GITHUB_WORKSPACE/clang-17/bin:$PATH
-              make -j$(nproc --all) \
-                ARCH=arm64 \
-                LLVM=1 \
-                LLVM_IAS=1 \
-                Image
+      - name: Build Kernel
+        run: |
+          cd common
+          export PATH=$GITHUB_WORKSPACE/clang-17/bin:$PATH
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image
 
-          - name: Đóng gói AnyKernel3
-            run: |
-              git clone https://github.com/osm0sis/AnyKernel3.git
-              cp common/arch/arm64/boot/Image AnyKernel3/
-              cd AnyKernel3
-              zip -r9 ../SM-F741B-KSU-Next-SUSFS-AnyKernel3.zip * -x .git
-              README.md
+      - name: Package AnyKernel3
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3.git
+          cp common/arch/arm64/boot/Image AnyKernel3/
+          cd AnyKernel3
+          zip -r9 ../SM-F741B-KSU-Next-SUSFS-AnyKernel3.zip * -x .git README.md
 
-          - name: Upload Artifact
-            uses: actions/upload-artifact@v4
-            with:
-              name: SM-F741B-KSU-Next-SUSFS-AnyKernel3
-              path: SM-F741B-KSU-Next-SUSFS-AnyKernel3.zip
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SM-F741B-KSU-Next-SUSFS-AnyKernel3
+          path: SM-F741B-KSU-Next-SUSFS-AnyKernel3.zip
