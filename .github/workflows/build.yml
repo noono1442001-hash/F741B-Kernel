@@ -24,17 +24,14 @@ jobs:
           unzip -q source.zip
           rm -f source.zip
           for f in *.tar.gz; do [ -f "$f" ] && tar -xzf "$f" && rm -f "$f"; done
-          ls -la
 
       - name: Tải Clang Toolchain (ZyC Clang 19 - Tương thích GKI 6.1)
         run: |
           mkdir -p toolchain/clang
           CLANG_URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases/latest | grep "browser_download_url.*tar.gz" | cut -d '"' -f 4 | head -n 1)
-          echo "Downloading Clang from: $CLANG_URL"
           aria2c -x 16 -s 16 "$CLANG_URL" -o clang.tar.gz
           tar -xzf clang.tar.gz -C toolchain/clang
           rm -f clang.tar.gz
-          toolchain/clang/bin/clang --version
 
       - name: Tích hợp KernelSU-Next (Nhánh SUSFS) & WildKernels SUSFS Patches
         run: |
@@ -43,7 +40,7 @@ jobs:
           elif [ -d "src/common" ]; then
             KDIR="$GITHUB_WORKSPACE/src/common"
           else
-            KDIR=$(find "$GITHUB_WORKSPACE/src" -maxdepth 4 -name "Makefile" -exec dirname {} \; | head -n 1)
+            KDIR=$(find "$GITHUB_WORKSPACE/src" -maxdepth 4 -name "gki_defconfig" | sed 's|/arch/arm64/configs/gki_defconfig||' | head -n 1)
           fi
           echo "KDIR=$KDIR" >> $GITHUB_ENV
           echo "Detected KDIR: $KDIR"
@@ -66,11 +63,15 @@ jobs:
       - name: Cấu hình Samsung (Tắt RKP/UH/DEFEX & Bật KSU + SUSFS)
         run: |
           cd "$KDIR"
-          DEFCONFIG="arch/arm64/configs/pineapple_gki_defconfig"
-          [ ! -f "$DEFCONFIG" ] && DEFCONFIG=$(find arch/arm64/configs -name "*pineapple*defconfig" | head -n 1)
-          echo "Using defconfig: $DEFCONFIG"
+          ls -la arch/arm64/configs/
+          ls -la arch/arm64/configs/vendor/ 2>/dev/null || true
 
-          ./scripts/config --file "$DEFCONFIG" \
+          # Chuẩn GKI 6.1 dùng gki_defconfig làm nền
+          BASE_DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          [ ! -f "$BASE_DEFCONFIG" ] && BASE_DEFCONFIG=$(find arch/arm64/configs -maxdepth 2 -name "*defconfig" | head -n 1)
+          echo "Using base defconfig: $BASE_DEFCONFIG"
+
+          ./scripts/config --file "$BASE_DEFCONFIG" \
             -d UH \
             -d UH_RKP \
             -d UH_LKMAUTH \
@@ -103,10 +104,14 @@ jobs:
           export LLVM=1
           export LLVM_IAS=1
 
-          B6Q_FRAG=$(find arch/arm64/configs -name "*b6q*.config" | sed 's|arch/arm64/configs/||' | tr '\n' ' ')
-          echo "Found b6q fragments: $B6Q_FRAG"
+          BASE_NAME=$(find arch/arm64/configs -maxdepth 1 -name "gki_defconfig" -exec basename {} \; | head -n 1)
+          [ -z "$BASE_NAME" ] && BASE_NAME=$(find arch/arm64/configs -maxdepth 2 -name "*defconfig" | sed 's|arch/arm64/configs/||' | head -n 1)
+          
+          # Gom các config fragment của pineapple và b6q (Z Flip 6) nếu nằm trong arch/arm64/configs
+          FRAGS=$(find arch/arm64/configs -type f \( -name "*pineapple*.config" -o -name "*b6q*.config" \) | sed 's|arch/arm64/configs/||' | sort | tr '\n' ' ')
+          echo "Building with: $BASE_NAME $FRAGS"
 
-          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 pineapple_gki_defconfig $B6Q_FRAG
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 $BASE_NAME $FRAGS
           make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 Image
 
       - name: Đóng gói và Upload file Image thành phẩm
