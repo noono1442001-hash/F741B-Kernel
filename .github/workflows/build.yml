@@ -1,0 +1,117 @@
+name: Build SM-F741B KernelSU-Next + Wild SUSFS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Giải phóng dung lượng ổ đĩa Runner
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h
+
+      - name: Cài đặt thư viện build cần thiết
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf imagemagick libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3 cpio aria2 lz4
+
+      - name: Tải và giải nén Kernel Source SM-F741B
+        run: |
+          mkdir -p src && cd src
+          aria2c -x 16 -s 16 "https://github.com/noono1442001-hash/F741B-Kernel/releases/download/v1.0/SM-F741B_15_Opensource.zip" -o source.zip
+          unzip -q source.zip
+          rm -f source.zip
+          ls -la
+          # Giải nén các gói tar.gz bên trong (Kernel.tar.gz / kernel_platform)
+          for f in *.tar.gz; do [ -f "$f" ] && tar -xzf "$f" && rm -f "$f"; done
+          ls -la
+
+      - name: Tải AOSP Clang Toolchain (r510928)
+        run: |
+          mkdir -p toolchain/clang
+          curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r510928.tar.gz" -o clang.tar.gz
+          tar -xzf clang.tar.gz -C toolchain/clang
+          rm -f clang.tar.gz
+
+      - name: Tích hợp KernelSU-Next (Nhánh SUSFS) & WildKernels SUSFS Patches
+        run: |
+          # Xác định thư mục chứa mã nguồn kernel (common hoặc kernel_platform/common)
+          if [ -d "src/kernel_platform/common" ]; then
+            KDIR="$GITHUB_WORKSPACE/src/kernel_platform/common"
+          elif [ -d "src/common" ]; then
+            KDIR="$GITHUB_WORKSPACE/src/common"
+          else
+            KDIR=$(find "$GITHUB_WORKSPACE/src" -maxdepth 3 -name "Makefile" -exec dirname {} \; | head -n 1)
+          fi
+          echo "KDIR=$KDIR" >> $GITHUB_ENV
+          cd "$KDIR"
+
+          # 1. Cài đặt KernelSU-Next (nhánh hỗ trợ SUSFS)
+          curl -LSs "https://raw.githubusercontent.com/WildKernels/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs || \
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+
+          # 2. Kéo bộ patch SUSFS mới nhất của WildKernels cho GKI 6.1 (android14-6.1)
+          git clone --depth=1 https://github.com/WildKernels/kernel_patches.git /tmp/wild_patches
+          cp -r /tmp/wild_patches/next/susfs_fix_patches/v1.5.5/* . 2>/dev/null || true
+          cp /tmp/wild_patches/50_add_susfs_in_gki-android14-6.1.patch . 2>/dev/null || \
+          cp $(find /tmp/wild_patches -name "*susfs*android14-6.1*.patch" | head -n 1) ./susfs.patch
+
+          # Áp patch SUSFS (bỏ qua nếu có hunk nhỏ lệch dòng do Samsung custom, log lại để kiểm tra)
+          for p in *susfs*.patch; do
+            [ -f "$p" ] && echo "Applying $p..." && patch -p1 --forward --fuzz=3 < "$p" || true
+          done
+
+      - name: Cấu hình Samsung (Tắt RKP/UH/DEFEX & Bật KSU + SUSFS)
+        run: |
+          cd "$KDIR"
+          DEFCONFIG="arch/arm64/configs/pineapple_gki_defconfig"
+          [ ! -f "$DEFCONFIG" ] && DEFCONFIG=$(find arch/arm64/configs -name "*pineapple*defconfig" | head -n 1)
+          echo "Using defconfig: $DEFCONFIG"
+
+          ./scripts/config --file "$DEFCONFIG" \
+            -d UH \
+            -d UH_RKP \
+            -d UH_LKMAUTH \
+            -d UH_LKM_BLOCK \
+            -d RKP_CFP_JOPP \
+            -d SECURITY_DEFEX \
+            -d PROCA \
+            -d FIVE \
+            -e KSU \
+            -e KSU_SUSFS \
+            -e KSU_SUSFS_SUS_PATH \
+            -e KSU_SUSFS_SUS_MOUNT \
+            -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+            -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+            -e KSU_SUSFS_SUS_KSTAT \
+            -e KSU_SUSFS_SUS_OVERLAYFS \
+            -e KSU_SUSFS_TRY_UMOUNT \
+            -e KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
+            -e KSU_SUSFS_SPOOF_UNAME \
+            -e KSU_SUSFS_ENABLE_LOG \
+            -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            -e KSU_SUSFS_OPEN_REDIRECT
+
+      - name: Biên dịch Kernel (Image)
+        run: |
+          cd "$KDIR"
+          export PATH="$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH"
+          export ARCH=arm64
+          export LLVM=1
+          export LLVM_IAS=1
+
+          # Tìm fragment config của b6q (Z Flip 6) nếu có
+          B6Q_FRAG=$(find arch/arm64/configs -name "*b6q*.config" | sed 's|arch/arm64/configs/||' | tr '\n' ' ')
+          echo "Found b6q fragments: $B6Q_FRAG"
+
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 pineapple_gki_defconfig $B6Q_FRAG
+          make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 Image
+
+      - name: Đóng gói và Upload file Image thành phẩm
+        uses: actions/upload-artifact@v4
+        with:
+          name: SM-F741B-KSU-Next-Wild-SUSFS
+          path: ${{ env.KDIR }}/out/arch/arm64/boot/Image
