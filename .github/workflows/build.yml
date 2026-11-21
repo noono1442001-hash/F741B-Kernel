@@ -1,4 +1,4 @@
-name: Build Samsung Z Flip 6 Official Bazel (Audio + WiFi + KSU + SUSFS)
+name: Build Samsung Z Flip 6 Official Bazel (Audio + WiFi + BT + KSU + SUSFS)
 
 on:
   workflow_dispatch:
@@ -35,14 +35,14 @@ jobs:
             rm "$file"
           done
 
-      - name: Fix One UI 7 Android 15 Wi-Fi Version (6.1.99)
+      - name: Fix Exact Stock Vermagic (6.1.99-android14-11-30958522-abF7410ZSS2BYF3)
         run: |
           cd kernel
-          # Revert SUBLEVEL tu 128 ve 99 de khop vermagic module Wi-Fi qca_cld3_kiwi_v2.ko tren One UI 7
-          sed -i 's/SUBLEVEL = 128/SUBLEVEL = 99/' kernel_platform/common/Makefile
-          sed -i 's/BUILD_NUMBER=F741BXXU2CYI6/BUILD_NUMBER=F741BXXU2BYCJ/' build_kernel_GKI.sh
-          # Xoa co -dirty de vermagic khop 100%
-          sed -i 's/-dirty//' kernel_platform/common/scripts/setlocalversion
+          # Sublevel chuẩn xác từ boot.img gốc là 99 (6.1.99)
+          sed -i 's/SUBLEVEL = .*/SUBLEVEL = 99/' kernel_platform/common/Makefile
+          sed -i 's/BUILD_NUMBER=.*/BUILD_NUMBER=F7410ZSS2BYF3/' build_kernel_GKI.sh
+          # Ép chuỗi vermagic khớp 100% từng byte với boot.img gốc: 6.1.99-android14-11-30958522-abF7410ZSS2BYF3
+          sed -i "$ s/.*/echo \"-android14-11-30958522-abF7410ZSS2BYF3\"/" kernel_platform/common/scripts/setlocalversion
 
       - name: Integrate KernelSU-Next
         run: |
@@ -58,7 +58,7 @@ jobs:
           cp ../../susfs4ksu/kernel_patches/include/linux/* include/linux/
           cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch ./
 
-          # Chuan bi file truoc khi va SUSFS (tranh xung dot ma nguon Samsung)
+          # Chuẩn bị file trước khi vá SUSFS (tránh xung đột mã nguồn Samsung)
           sed -i '/#ifdef CONFIG_SECURITY_DEFEX/,/^#endif/d' fs/open.c
           sed -i '/#include "internal.h"/a #include <trace/hooks/blk.h>' fs/namespace.c
           sed -i '/copy_flags = CL_COPY_UNBINDABLE | CL_EXPIRE;/,/#endif/ {
@@ -73,27 +73,39 @@ jobs:
           sed -i '/#include <trace\/hooks\/blk.h>/d' fs/namespace.c
           rm -f 50_add_susfs_in_gki-android14-6.1.patch
 
-      - name: Configure Defconfig & Disable Knox Securities
+      - name: Integrate NoMount
+        run: |
+          cd kernel/kernel_platform/common
+          curl -sL https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh | bash -
+
+      - name: Configure Defconfig & Fix User Space Freezing
         run: |
           cd kernel
           COMMON="kernel_platform/common"
           GKI_DEFCONFIG="$COMMON/arch/arm64/configs/gki_defconfig"
 
-          # Bat KernelSU & SuSFS
+          # Bật KernelSU & SuSFS
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SUS_PATH
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SUS_MOUNT
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SUS_KSTAT
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_TRY_UMOUNT
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SPOOF_UNAME
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_ENABLE_LOG
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
 
-          # Tat co che chan root cua Samsung Knox / RKP / Defex
+          # Bật tmpfs xattr & overlay để One UI 7 không bị đơ/sập vì lỗi "hệ thống người dùng"
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_OVERLAY_FS
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TMPFS_XATTR
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TMPFS_POSIX_ACL
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NOMOUNT
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_USER_NS
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_PID_NS
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IPC_NS
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_DEVTMPFS
+
+          # Tắt cơ chế chặn root của Samsung Knox / RKP / Defex
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KSU_SAMSUNG_KDP
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KSU_SAMSUNG_RKP
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KSU_SAMSUNG_DEFEX
@@ -119,7 +131,7 @@ jobs:
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KDP_NS
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KNOX_NCM
 
-          # Bo check_defconfig de khong bi dung build
+          # Bỏ check_defconfig để không bị dừng build
           sed -i 's/check_defconfig//' "$COMMON/build.config.gki"
 
       - name: Build Official Samsung Kernel via Bazel
@@ -140,14 +152,14 @@ jobs:
           echo "Selected Image: $KERNEL_IMAGE"
           ls -lh "$KERNEL_IMAGE"
 
-          # 1. Dong goi AnyKernel3 ZIP
+          # 1. Đóng gói AnyKernel3 ZIP
           git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 AnyKernel3
           cp "$KERNEL_IMAGE" AnyKernel3/Image
           cd AnyKernel3
           zip -r9 ../../SM-F741B-OneUI7-6.1.99-KSU-Next-SUSFS-AnyKernel3.zip * -x .git README.md
           cd ..
 
-          # 2. Dong goi boot.img (Header v4) va boot.tar cho Odin
+          # 2. Đóng gói boot.img (Header v4) và boot.tar cho Odin
           python3 -c "
           import os, struct
           kernel_path = '$KERNEL_IMAGE'
