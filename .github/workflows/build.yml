@@ -51,13 +51,36 @@ jobs:
           rm -rf ./android/abi_gki_protected_exports_*
           sed -i '/protected_exports_list/d' ./BUILD.bazel
 
-          # 2. Bỏ qua kiểm tra cùng vermagic (same_magic bypass)
-          sed -i 's/} else if (!same_magic/} else if (0 \&\& !same_magic/' kernel/module/main.c
+          # 2. Mở khóa triệt để toàn bộ kiểm tra module trong version.c (Bypass check_version, check_modstruct_version, same_magic)
+          cat << 'EOF' > kernel/module/version.c
+          // SPDX-License-Identifier: GPL-2.0-or-later
+          #include <linux/module.h>
+          #include <linux/string.h>
+          #include <linux/printk.h>
+          #include "internal.h"
 
-          # 3. Bỏ qua kiểm tra lệch mã kiểm tra CRC biểu tượng (check_version bypass)
-          sed -i 's/if (!check_version(info, name, mod, fsa.crc))/if (0 \&\& !check_version(info, name, mod, fsa.crc))/' kernel/module/main.c
+          int check_version(const struct load_info *info, const char *symname, struct module *mod, const s32 *crc)
+          {
+          	return 1;
+          }
 
-          # 4. Bỏ qua cơ chế chặn ký hiệu GKI Protected Symbols (-EACCES bypass)
+          int check_modstruct_version(const struct load_info *info, struct module *mod)
+          {
+          	return 1;
+          }
+
+          int same_magic(const char *amagic, const char *bmagic, bool has_crcs)
+          {
+          	return 1;
+          }
+
+          void module_layout(struct module *mod, struct modversion_info *ver, struct kernel_param *kp, struct kernel_symbol *ks, struct tracepoint * const *tp)
+          {
+          }
+          EXPORT_SYMBOL(module_layout);
+          EOF
+
+          # 3. Bỏ qua cơ chế chặn ký hiệu GKI Protected Symbols (-EACCES bypass)
           sed -i 's/fsa.sym = ERR_PTR(-EACCES);/\/* bypassed *\/ (void)0;/g' kernel/module/main.c
 
       - name: Integrate KernelSU-Next
@@ -120,6 +143,7 @@ jobs:
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_PID_NS
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IPC_NS
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_DEVTMPFS
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_MODULE_ALLOW_MISSING_NAMESPACE_IMPORTS
 
           # Tắt cơ chế chặn root của Samsung Knox / RKP / Defex
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KSU_SAMSUNG_KDP
