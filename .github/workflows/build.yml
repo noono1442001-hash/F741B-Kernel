@@ -41,8 +41,24 @@ jobs:
           # Sublevel chuẩn xác từ boot.img gốc là 99 (6.1.99)
           sed -i 's/SUBLEVEL = .*/SUBLEVEL = 99/' kernel_platform/common/Makefile
           sed -i 's/BUILD_NUMBER=.*/BUILD_NUMBER=F7410ZSS2BYF3/' build_kernel_GKI.sh
-          # Ép chuỗi vermagic khớp 100% từng byte với boot.img gốc: 6.1.99-android14-11-30958522-abF7410ZSS2BYF3
+          # Ép chuỗi vermagic khớp 100% từng byte với boot.img gốc
           sed -i "$ s/.*/echo \"-android14-11-30958522-abF7410ZSS2BYF3\"/" kernel_platform/common/scripts/setlocalversion
+
+      - name: Unlock All Vendor Module Loading (WiFi & Bluetooth Fix)
+        run: |
+          cd kernel/kernel_platform/common
+          # 1. Xóa bỏ danh sách GKI Protected Exports để Qualcomm WiFi & BT nạp tự do
+          rm -rf ./android/abi_gki_protected_exports_*
+          sed -i '/protected_exports_list/d' ./BUILD.bazel
+
+          # 2. Bỏ qua kiểm tra cùng vermagic (same_magic bypass)
+          sed -i 's/} else if (!same_magic/} else if (0 \&\& !same_magic/' kernel/module/main.c
+
+          # 3. Bỏ qua kiểm tra lệch mã kiểm tra CRC biểu tượng (check_version bypass)
+          sed -i 's/if (!check_version(info, name, mod, fsa.crc))/if (0 \&\& !check_version(info, name, mod, fsa.crc))/' kernel/module/main.c
+
+          # 4. Bỏ qua cơ chế chặn ký hiệu GKI Protected Symbols (-EACCES bypass)
+          sed -i 's/fsa.sym = ERR_PTR(-EACCES);/\/* bypassed *\/ (void)0;/g' kernel/module/main.c
 
       - name: Integrate KernelSU-Next
         run: |
