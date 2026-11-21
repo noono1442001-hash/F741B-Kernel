@@ -17,7 +17,7 @@ jobs:
           mkdir -p clang-17
           curl -L "https://kali.download/nethunter-images/toolchains/clang-r487747c.tar.gz" | tar -zx -C clang-17/
 
-      - name: Clone Android Common Kernel 6.1.99
+      - name: Clone Android Common Kernel 6.1.99 (Đúng chuẩn bản ROM)
         run: |
           git clone --depth=1 https://android.googlesource.com/kernel/common -b android14-6.1.99_r00 common
 
@@ -26,15 +26,17 @@ jobs:
           cd common
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
 
-      - name: Setup SUSFS
+      - name: Setup & Patch Full SUSFS (Kernel + KernelSU)
         run: |
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-6.1 susfs
           cd common
+          # 1. Patch cho Kernel
           cp ../susfs/kernel_patches/fs/* fs/
           cp ../susfs/kernel_patches/include/linux/* include/linux/
           patch -p1 < ../susfs/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch || true
-          cd KernelSU
-          patch -p1 < ../../susfs/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
+          
+          # 2. Patch cho KernelSU (nằm trong thư mục drivers/kernelsu)
+          patch -p1 -d drivers/kernelsu < ../susfs/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
 
       - name: Configure Kernel
         run: |
@@ -67,8 +69,10 @@ jobs:
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-          sed -i 's/block=auto/block=boot/g' AnyKernel3/anykernel.sh
-          sed -i 's/is_slot_device=0/is_slot_device=auto/g' AnyKernel3/anykernel.sh
+          sed -i 's/BLOCK=\/dev\/block\/platform\/omap\/omap_hsmmc.0\/by-name\/boot;/block=boot;/g' AnyKernel3/anykernel.sh
+          sed -i 's/IS_SLOT_DEVICE=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
+          sed -i 's/dump_boot;/split_boot;/g' AnyKernel3/anykernel.sh
+          sed -i 's/write_boot;/flash_boot;/g' AnyKernel3/anykernel.sh
           cp common/arch/arm64/boot/Image AnyKernel3/
           cd AnyKernel3
           zip -r9 ../SM-F741B-KSU-Next-SUSFS-6.1.99.zip * -x .git README.md
