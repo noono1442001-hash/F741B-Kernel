@@ -35,20 +35,13 @@ jobs:
 
       - name: Tích hợp KernelSU-Next & WildKernels SUSFS Patches
         run: |
-          if [ -d "src/kernel_platform/common" ]; then
-            KDIR="$GITHUB_WORKSPACE/src/kernel_platform/common"
-          elif [ -d "src/common" ]; then
-            KDIR="$GITHUB_WORKSPACE/src/common"
-          else
-            KDIR=$(find "$GITHUB_WORKSPACE/src" -maxdepth 4 -name "gki_defconfig" | sed 's|/arch/arm64/configs/gki_defconfig||' | head -n 1)
-          fi
+          KDIR="$GITHUB_WORKSPACE/src/kernel_platform/common"
+          [ ! -d "$KDIR" ] && KDIR=$(find "$GITHUB_WORKSPACE/src" -maxdepth 4 -name "gki_defconfig" | sed 's|/arch/arm64/configs/gki_defconfig||' | head -n 1)
           echo "KDIR=$KDIR" >> $GITHUB_ENV
-          echo "Detected KDIR: $KDIR"
           cd "$KDIR"
 
-          # 1. Cài đặt KernelSU-Next từ kho WildKernels (nhánh mặc định)
-          curl -LSs "https://raw.githubusercontent.com/WildKernels/KernelSU-Next/main/kernel/setup.sh" | bash - || \
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/main/kernel/setup.sh" | bash -
+          # 1. Cài đặt KernelSU-Next (từ nhánh next, không truyền tham số branch để tự checkout nhánh chuẩn)
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
 
           # 2. Kéo bộ patch SUSFS mới nhất của WildKernels cho GKI 6.1 (android14-6.1)
           git clone --depth=1 https://github.com/WildKernels/kernel_patches.git /tmp/wild_patches
@@ -56,10 +49,22 @@ jobs:
           [ -z "$SUSFS_PATCH" ] && SUSFS_PATCH=$(find /tmp/wild_patches -name "*susfs*android14-6.1*.patch" | head -n 1)
           echo "Found SUSFS patch: $SUSFS_PATCH"
 
-          # Áp patch SUSFS vào nhân (bỏ qua phần patch vào thư mục kernel/Kbuild của KSU nếu KSU đã tích hợp sẵn)
+          # Áp phần patch dành cho KernelSU-Next (kernel/Kbuild, kernel/Makefile...)
+          if [ -d "KernelSU-Next" ]; then
+            patch -d KernelSU-Next -p1 --forward --fuzz=3 < "$SUSFS_PATCH" || true
+          fi
+
+          # Áp phần patch dành cho nhân Linux (fs/*, include/*...)
           patch -p1 --forward --fuzz=3 < "$SUSFS_PATCH" || true
 
-          # Copy thêm các file nguồn susfs (fs/susfs.c, include/linux/susfs.h...) nếu patch không tự tạo
+          # Áp thêm bản vá susfs của KernelSU-Next nếu có trong kho WildKernels
+          KSU_SUSFS_PATCH=$(find /tmp/wild_patches -name "*kernelsu*susfs*.patch" -o -name "*ksu*susfs*.patch" | head -n 1)
+          if [ -n "$KSU_SUSFS_PATCH" ] && [ -d "KernelSU-Next" ]; then
+            echo "Applying KSU SUSFS patch: $KSU_SUSFS_PATCH"
+            patch -d KernelSU-Next -p1 --forward --fuzz=3 < "$KSU_SUSFS_PATCH" || true
+          fi
+
+          # Copy đầy đủ các file nguồn susfs (fs/susfs.c, include/linux/susfs.h...)
           find /tmp/wild_patches -path "*android14-6.1*" -name "*.c" -exec cp -n {} fs/ \; 2>/dev/null || true
           find /tmp/wild_patches -path "*android14-6.1*" -name "*.h" -exec cp -n {} include/linux/ \; 2>/dev/null || true
 
@@ -68,7 +73,6 @@ jobs:
           cd "$KDIR"
           BASE_DEFCONFIG="arch/arm64/configs/gki_defconfig"
           [ ! -f "$BASE_DEFCONFIG" ] && BASE_DEFCONFIG=$(find arch/arm64/configs -maxdepth 2 -name "*defconfig" | head -n 1)
-          echo "Using base defconfig: $BASE_DEFCONFIG"
 
           ./scripts/config --file "$BASE_DEFCONFIG" \
             -d UH \
