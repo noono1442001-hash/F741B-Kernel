@@ -33,41 +33,40 @@ jobs:
           tar -xzf clang.tar.gz -C toolchain/clang
           rm -f clang.tar.gz
 
-      - name: Tích hợp KernelSU-Next & SUSFS (simonpunk + WildKernels)
+      - name: Tích hợp đồng bộ WildKernels KernelSU-Next + SUSFS
         run: |
           KDIR="$GITHUB_WORKSPACE/src/kernel_platform/common"
           [ ! -d "$KDIR" ] && KDIR=$(find "$GITHUB_WORKSPACE/src" -maxdepth 4 -name "gki_defconfig" | sed 's|/arch/arm64/configs/gki_defconfig||' | head -n 1)
           echo "KDIR=$KDIR" >> $GITHUB_ENV
           cd "$KDIR"
 
-          # 1. Cài đặt KernelSU-Next
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+          # 1. Kéo đồng bộ KernelSU-Next nhánh next-susfs của WildKernels (đã tích hợp sẵn mã KSU-SUSFS khớp phiên bản)
+          git clone --depth=1 -b next-susfs https://github.com/WildKernels/KernelSU-Next.git || \
+          git clone --depth=1 https://github.com/WildKernels/KernelSU-Next.git
 
-          # 2. Kéo mã nguồn SUSFS gốc từ simonpunk (nhánh gki-android14-6.1) để lấy đủ susfs.h và susfs.c
-          git clone --depth=1 -b gki-android14-6.1 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs4ksu || \
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs4ksu
+          ln -sf "$(pwd)/KernelSU-Next/kernel" "$(pwd)/drivers/kernelsu"
+          grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+          grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
-          cp -rf /tmp/susfs4ksu/kernel_patches/include/linux/* include/linux/
-          cp -rf /tmp/susfs4ksu/kernel_patches/fs/* fs/
-
-          # 3. Kéo bộ patch của WildKernels và áp patch vào nhân + KernelSU-Next
+          # 2. Kéo bộ patch tương ứng từ WildKernels/kernel_patches (chứa cả file .c/.h và .patch đồng bộ với nhánh trên)
           git clone --depth=1 https://github.com/WildKernels/kernel_patches.git /tmp/wild_patches
-          SUSFS_PATCH=$(find /tmp/wild_patches -name "50_add_susfs_in_gki-android14-6.1.patch" | head -n 1)
-          [ -z "$SUSFS_PATCH" ] && SUSFS_PATCH=$(find /tmp/susfs4ksu/kernel_patches -name "50_add_susfs_in_gki-android14-6.1.patch" | head -n 1)
-          echo "Using SUSFS patch: $SUSFS_PATCH"
 
-          if [ -d "KernelSU-Next" ]; then
-            patch -d KernelSU-Next -p1 --forward --fuzz=3 < "$SUSFS_PATCH" || true
-          fi
+          # Chép các file nguồn susfs (susfs.h, susfs.c...) từ kho WildKernels nếu có
+          find /tmp/wild_patches -name "susfs*.h" -exec cp -f {} include/linux/ \;
+          find /tmp/wild_patches -name "susfs*.c" -exec cp -f {} fs/ \;
+
+          # Tìm đúng file patch GKI android14-6.1 trong WildKernels
+          SUSFS_PATCH=$(find /tmp/wild_patches -name "50_add_susfs_in_gki-android14-6.1.patch" | head -n 1)
+          [ -z "$SUSFS_PATCH" ] && SUSFS_PATCH=$(find /tmp/wild_patches -name "*susfs*android14-6.1*.patch" | head -n 1)
+          echo "Applying WildKernels patch: $SUSFS_PATCH"
+
           patch -p1 --forward --fuzz=3 < "$SUSFS_PATCH" || true
 
-          KSU_SUSFS_PATCH=$(find /tmp/wild_patches /tmp/susfs4ksu -name "*kernelsu*susfs*.patch" -o -name "*ksu*susfs*.patch" | head -n 1)
-          if [ -n "$KSU_SUSFS_PATCH" ] && [ -d "KernelSU-Next" ]; then
-            patch -d KernelSU-Next -p1 --forward --fuzz=3 < "$KSU_SUSFS_PATCH" || true
-          fi
-
-          # Kiểm tra chắc chắn file include/linux/susfs.h đã nằm đúng chỗ
-          ls -la include/linux/susfs*.h fs/susfs*.c
+          # Áp thêm các bản vá sửa lỗi SUSFS (fix patches) của WildKernels nếu có
+          for fixp in $(find /tmp/wild_patches -path "*susfs_fix_patches*" -name "*.patch" | sort); do
+            echo "Applying fix patch: $fixp"
+            patch -p1 --forward --fuzz=3 < "$fixp" || true
+          done
 
       - name: Cấu hình Samsung (Tắt RKP/UH/DEFEX & Bật KSU + SUSFS)
         run: |
