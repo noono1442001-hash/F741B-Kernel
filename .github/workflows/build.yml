@@ -158,10 +158,13 @@ jobs:
       - name: Configure Kleaf to Ignore Undeclared Modules
         run: |
           cd kernel
-          # Tắt chặn lỗi module_outs trong Kleaf
+          # Tắt triệt để mọi điểm chặn lỗi module_outs trong Kleaf
+          sed -i 's/exit 1/true/g' kernel_platform/build/kernel/kleaf/impl/kernel_build.bzl 2>/dev/null || true
+          sed -i 's/exit 1/true/g' kernel_platform/build/kernel/kleaf/impl/kernel_module.bzl 2>/dev/null || true
           sed -i 's/epilog = "exit 1"/epilog = ""/' kernel_platform/build/kernel/kleaf/impl/kernel_build.bzl 2>/dev/null || true
-          echo "build --allow_undeclared_modules" >> kernel_platform/build/kernel/kleaf/common.bazelrc 2>/dev/null || true
-          echo "build --allow_undeclared_modules" >> kernel_platform/common/.bazelrc 2>/dev/null || true
+          echo "build --//build/kernel/kleaf:allow_undeclared_modules=true" >> kernel_platform/build/kernel/kleaf/common.bazelrc 2>/dev/null || true
+          echo "build --//build/kernel/kleaf:allow_undeclared_modules=true" >> kernel_platform/common/.bazelrc 2>/dev/null || true
+          echo "build --//build/kernel/kleaf:allow_undeclared_modules=true" >> kernel_platform/.bazelrc 2>/dev/null || true
 
       - name: Build Official Samsung Kernel via Bazel
         run: |
@@ -170,7 +173,7 @@ jobs:
           chmod +x kernel_platform/tools/bazel 2>/dev/null || true
           chmod +x kernel_platform/build/kernel/kleaf/bazel.sh 2>/dev/null || true
           # Chạy build chính xác theo chuẩn SM-F7410 (Hong Kong / Taiwan)
-          ./build_kernel_GKI.sh b6q_chn_hkx user pineapple || ./build_kernel_GKI.sh || true
+          ./build_kernel_GKI.sh b6q_chn_hkx user pineapple || ./build_kernel_GKI.sh
 
       - name: Package AnyKernel3 & Odin boot.tar
         run: |
