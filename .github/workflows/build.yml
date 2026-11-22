@@ -1,7 +1,10 @@
 name: Build Samsung Galaxy Z Flip 6 (SM-F7410 HK/TW) Official Bazel (Audio + WiFi + BT + KSU-Next + SUSFS 2.4.0)
 
-on:
+"on":
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   build:
@@ -86,15 +89,6 @@ jobs:
           sed -i '/#include <trace\/hooks\/blk.h>/d' fs/namespace.c
           rm -f 50_add_susfs_in_gki-android14-6.1.patch
 
-          # SUSFS page-size compatibility fallbacks
-          if grep -q 'VMA_PAD_START(' fs/proc/task_mmu.c && ! grep -qE '#include <linux/pgsize_migration(_inline)?\.h>|define VMA_PAD_START' fs/proc/task_mmu.c; then
-            sed -i '1a #ifndef VMA_PAD_START
-#define VMA_PAD_START(vma) ((vma)->vm_end)
-#endif' fs/proc/task_mmu.c
-          fi
-          if grep -q '__fold_filemap_fixup_entry' fs/proc/task_mmu.c && ! grep -q '#include <linux/page_size_compat.h>' fs/proc/task_mmu.c; then
-            sed -i '/#include <linux\/pkeys.h>/a #include <linux/page_size_compat.h>' fs/proc/task_mmu.c
-          fi
 
       - name: Integrate NoMount
         run: |
