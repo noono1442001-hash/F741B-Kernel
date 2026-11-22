@@ -159,7 +159,7 @@ jobs:
 
           # Khóa chính xác chuỗi Vermagic gốc 6.1.99-android14-11-30958522-abF7410ZSS2BYF3
           sed -i 's/-dirty//' ./scripts/setlocalversion
-          sed -i '$ s/.*/echo "-30958522-abF7410ZSS2BYF3"/' ./scripts/setlocalversion
+          sed -i '$ s/.*/echo "-android14-11-30958522-abF7410ZSS2BYF3"/' ./scripts/setlocalversion
 
       - name: Build Official Samsung Kernel via Bazel
         run: |
