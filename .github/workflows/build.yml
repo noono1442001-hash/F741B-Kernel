@@ -1,6 +1,6 @@
-name: Build Samsung Galaxy Z Flip 6 (SM-F7410 HK/TW) Official Bazel (Audio + WiFi + BT + KSU-Next + SUSFS 2.4.0)
+name: Build Samsung Galaxy Z Flip 6 (SM-F7410 HK/TW) Official 6.1.99 (Audio + WiFi + BT + KSU-Next + SUSFS 2.4.0)
 
-"on":
+on:
   workflow_dispatch:
   push:
     branches:
@@ -41,6 +41,12 @@ jobs:
             rm "$file"
           done
 
+      - name: Switch Common GKI to Official 6.1.99 (android14-6.1.99_r00)
+        run: |
+          cd kernel/kernel_platform
+          rm -rf common
+          git clone --depth 1 -b android14-6.1.99_r00 https://android.googlesource.com/kernel/common common
+
       - name: Apply Official Samsung SM-F7410 (Hong Kong / Taiwan) Device Tree & Configs
         run: |
           cd kernel
@@ -74,21 +80,10 @@ jobs:
           cp ../../susfs4ksu/kernel_patches/include/linux/* include/linux/
           cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch ./
 
-          # Chuẩn bị file trước khi vá SUSFS tránh xung đột mã nguồn Samsung
-          sed -i '/#ifdef CONFIG_SECURITY_DEFEX/,/^#endif/d' fs/open.c
           sed -i '/#include "internal.h"/a #include <trace/hooks/blk.h>' fs/namespace.c
-          sed -i '/copy_flags = CL_COPY_UNBINDABLE | CL_EXPIRE;/,/#endif/ {
-           /#ifdef CONFIG_KDP_NS/,/#endif/ {
-              /#else/,/#endif/!d
-              /#else/d
-              /#endif/d
-           }
-          }' fs/namespace.c
-
           patch -p1 < 50_add_susfs_in_gki-android14-6.1.patch || true
           sed -i '/#include <trace\/hooks\/blk.h>/d' fs/namespace.c
           rm -f 50_add_susfs_in_gki-android14-6.1.patch
-
 
       - name: Integrate NoMount
         run: |
@@ -106,31 +101,26 @@ jobs:
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SUS_PATH
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SUS_MOUNT
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SUS_KSTAT
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SUS_OVERLAYFS
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_TRY_UMOUNT
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SPOOF_UNAME
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_ENABLE_LOG
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KSU_SUSFS_OPEN_REDIRECT
 
-          # Bật tmpfs xattr & overlay để One UI 7 không bị đơ/sập vì lỗi hệ thống người dùng
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_OVERLAY_FS
+          # Cấu hình One UI 7: Tránh đơ giao diện & Treo máy
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TMPFS_XATTR
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TMPFS_POSIX_ACL
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NOMOUNT
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_USER_NS
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_PID_NS
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IPC_NS
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_DEVTMPFS
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KALLSYMS
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_KALLSYMS_ALL
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_MODULE_ALLOW_MISSING_NAMESPACE_IMPORTS
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NOMOUNT
 
-          # Tắt cơ chế chặn root của Samsung Knox / RKP / Defex
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KSU_SAMSUNG_KDP
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KSU_SAMSUNG_RKP
-          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KSU_SAMSUNG_DEFEX
+          # Tắt Knox, RKP, DEFEX, TIMA
+          "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_SECURITY_DEFEX
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_KSU_SAMSUNG_NO_PATCH_TEXT
-
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_UH
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_UH_RKP
           "$COMMON/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_UH_LKMAUTH
@@ -154,15 +144,16 @@ jobs:
           # Bỏ check_defconfig
           sed -i 's/check_defconfig//' "$COMMON/build.config.gki"
 
-      - name: Unlock All Vendor Module Loading (Clean WildKernels Method)
+      - name: Unlock All Vendor Module Loading & Lock Exact Stock Vermagic
         run: |
           cd kernel/kernel_platform/common
           # Xóa bỏ danh sách GKI Protected Exports để WiFi & BT module nạp tự do
           rm -rf ./android/abi_gki_protected_exports_*
           perl -pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_exports_aarch64",\s*$//;' ./BUILD.bazel
 
-          # Giữ sạch setlocalversion theo chuẩn WildKernels
+          # Khóa chính xác Vermagic 6.1.99-android14-11-30958522-abF7410ZSS2BYF3
           sed -i 's/-dirty//' ./scripts/setlocalversion
+          sed -i 's/echo "$res"/echo "-30958522-abF7410ZSS2BYF3"/' ./scripts/setlocalversion
 
       - name: Build Official Samsung Kernel via Bazel
         run: |
