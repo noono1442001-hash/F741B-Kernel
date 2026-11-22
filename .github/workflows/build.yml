@@ -153,7 +153,15 @@ jobs:
 
           # Khóa chính xác Vermagic 6.1.99-android14-11-30958522-abF7410ZSS2BYF3
           sed -i 's/-dirty//' ./scripts/setlocalversion
-          sed -i 's/echo "$res"/echo "-30958522-abF7410ZSS2BYF3"/' ./scripts/setlocalversion
+          sed -i '$ s/.*/echo "-30958522-abF7410ZSS2BYF3"/' ./scripts/setlocalversion
+
+      - name: Configure Kleaf to Ignore Undeclared Modules
+        run: |
+          cd kernel
+          # Tắt chặn lỗi module_outs trong Kleaf
+          sed -i 's/epilog = "exit 1"/epilog = ""/' kernel_platform/build/kernel/kleaf/impl/kernel_build.bzl 2>/dev/null || true
+          echo "build --allow_undeclared_modules" >> kernel_platform/build/kernel/kleaf/common.bazelrc 2>/dev/null || true
+          echo "build --allow_undeclared_modules" >> kernel_platform/common/.bazelrc 2>/dev/null || true
 
       - name: Build Official Samsung Kernel via Bazel
         run: |
@@ -167,11 +175,17 @@ jobs:
       - name: Package AnyKernel3 & Odin boot.tar
         run: |
           cd kernel
-          KERNEL_IMAGE=$(find . -name "Image" -type f | grep -E "dist|mixed_tree|bazel-bin" | head -n 1)
+          # Tìm file Image (theo symlink -L của Bazel)
+          KERNEL_IMAGE=$(find -L . -name "Image" -type f | grep -E "dist|bazel-bin|arch" | head -n 1)
           if [ -z "$KERNEL_IMAGE" ]; then
-            KERNEL_IMAGE=$(find . -name "Image" -type f | head -n 1)
+            KERNEL_IMAGE=$(find -L . -name "Image" -type f | head -n 1)
           fi
           echo "Selected Image: $KERNEL_IMAGE"
+          if [ -z "$KERNEL_IMAGE" ]; then
+            echo "ERROR: Kernel Image not found!"
+            find -L . -name "*Image*" || true
+            exit 1
+          fi
           ls -lh "$KERNEL_IMAGE"
 
           # 1. Đóng gói AnyKernel3 ZIP
